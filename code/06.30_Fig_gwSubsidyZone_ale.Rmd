@@ -1,0 +1,272 @@
+---
+title: "Groundwater Subsidy Zone"
+author: "jill deines"
+date: "04/05/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal:  examine yield response to gw level**
+
+Notes: 
+* Cleaned datasets derived from:
+
+  * yield response to gw levels: rf and ale plots run in 03.00
+  * stability: analyses in 03.50
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/06.30_gwSubsidy/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(patchwork)
+
+library(here)
+
+sessionInfo()
+```
+
+# Directories and data files
+
+```{r directories, message = FALSE}
+
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+
+# plot data file names: scym and psim gw subsidy aleplots from 03.00
+scymYield_df <- read_csv(paste0(repoDataDir,'/Fig3a_scym_yieldVsWT_aleplot_may2024_35kNoDupe_standardSoilM.csv'))
+scymYield_df_enhanced <- read_csv(paste0(repoDataDir,'/Fig3a_scym_yieldVsWT_aleplot_may2024_35kNoDupe_EnhancedSoilM.csv'))
+
+
+psimYield_df <- read_csv(paste0(repoDataDir,'/Fig3b_psim_yieldVsWT_aleplot_may2024_standardSoilM.csv'))
+sa_master <- read_csv(paste0(repoDataDir,'/Fig3b_psims_SA_noDeep_nov23.csv'))
+
+scym_byPPET <- read_csv(paste0(repoDataDir,'/Fig3d_scym_yieldVsWT_byPPET_aleplot_oct23_35knoDupe.csv'))
+
+# plot data files for stability analysis from 03.50
+stability <- read_csv(paste0(repoDataDir,'/Fig3c_stabilityAnalysis_main_may24.csv'))
+vpd <- read_csv(paste0(repoDataDir,'/Fig3c_stabilityAnalysis_vpd_may24.csv'))
+```
+
+
+# Plots
+
+## SCYM 
+
+```{r Fig_scymSubsidy, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+scym <- ggplot(scymYield_df,
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.05, xmax = 2.52, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.025, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.47, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank()) +
+  ggtitle('SCYM Observations')
+
+scym
+
+max(scymYield_df$YieldEffect)
+scymYield_df %>%
+  slice_max(YieldEffect)
+max(scymYield_df$YieldEffect) + 0.025
+```
+
+
+for presentations: focused only on scym range
+
+
+```{r Fig_scymSubsidy_zoom, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+scym_zoom <- ggplot(scymYield_df,
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.05, xmax = 2.52, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  #coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.025, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.47, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank())
+scym_zoom
+
+```
+
+
+
+## SCYM - enhanced model
+accounts for capillary rise to soil moisture
+
+```{r Fig_scymSubsidy_enhanced, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+scym2 <- ggplot(scymYield_df_enhanced,
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.2, xmax = 2.48, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.005, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.66, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank()) +
+  ggtitle('SCYM Observations')
+
+scym2
+
+max(scymYield_df_enhanced$YieldEffect)
+scymYield_df_enhanced %>%
+  slice_max(YieldEffect)
+max(scymYield_df_enhanced$YieldEffect) + 0.005
+```
+
+
+## PSIM
+
+```{r Fig_psimSubsidy, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+noisy <- sa_master %>% filter(model == 'WT_Jul_cor70')
+
+psim <- ggplot(psimYield_df,
+       aes(x = psim7, y = YieldEffect)) +
+  # geom_rect(xmin = .775, xmax = 2.48, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line(data = noisy, color = 'gray50') +
+  geom_line() +
+  
+  geom_rug() +
+  coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.035, linetype = 'dashed', color = 'red') +
+  # geom_vline(xintercept = 1.23, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank()) +
+  ggtitle('PSIMS Simulations')
+psim
+
+max(psimYield_df$YieldEffect)
+psimYield_df %>%
+  slice_max(YieldEffect)
+max(psimYield_df$YieldEffect) + 0.025
+```
+
+## combo: scym and psim
+
+```{r gwSubsidy_combo, fig.width = 6.5, fig.height = 4, dpi = 300, dev=c('png','pdf')}
+psim2 <- psim +
+  ylab('')
+scym + psim2
+```
+
+# Stability
+
+```{r stability, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('png','pdf')}
+
+vpd_forPlot <- vpd %>% mutate(type = 'Mean July VPD',
+                      vpd_tile = case_when(vpd_tile == 1 ~ 'Low VPD',
+                                           vpd_tile == 2 ~ 'Moderate',
+                                           vpd_tile == 3 ~ 'High VPD')) %>%
+         filter(vpd_tile != 'Moderate')
+
+stability2 <- stability %>% mutate(vpd_tile = 0, type = 'Combined')
+
+stabilityPlot <- ggplot(stability2,
+       aes(x = psim7, y = Effect)) +
+  geom_line() +  
+  #geom_rug() +
+  geom_line(data =vpd_forPlot,
+            aes(group = as.factor(vpd_tile), color =  as.factor(vpd_tile))) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+    geom_rug(data =vpd_forPlot, aes(color = as.factor(vpd_tile))) +
+  scale_color_manual(values = c('#fd8d3c', '#1f78b4'), name = 'Mean July VPD') +
+  scale_linetype_manual(values=c( "twodash", "solid"))+
+  ylab('Effect on Variability (CV)') + xlab('Mean July Depth to Water (m)') +
+  theme_bw() + theme(legend.position = c(.73, .3),
+                     panel.grid.minor = element_blank(),
+                     panel.grid.major = element_blank(),
+                     legend.background = element_blank(),
+                     legend.title = element_blank())
+stabilityPlot
+```
+
+# trifecta
+
+```{r alePlots_3panel, fig.width = 7, fig.height = 2.5, dpi = 300, dev=c('png','pdf')}
+scym2 <- scym +
+  ggtitle(NULL) 
+
+psim3 <- psim +
+  ggtitle(NULL)
+
+stabilityPlot2 <- stabilityPlot 
+
+scym2 + psim3 + stabilityPlot2
+```
+
+# Yield Effect by Water Deficit
+
+```{r alePlot_byPPET, fig.width = 7, fig.height = 2.25, dpi = 300, dev=c('png','pdf')}
+# combine with scym for all "baseline line" 
+scymYield_df1 <- scymYield_df %>% mutate(speiJu_class = 1)
+scymYield_df3 <- scymYield_df %>% mutate(speiJu_class = 3)
+scymYield_df4 <- scymYield_df %>% mutate(speiJu_class = 4)
+scymYield_addMe <- bind_rows(scymYield_df1,scymYield_df3,scymYield_df4) %>%
+  mutate(type = 'all')
+
+ppet_df <- scym_byPPET %>%
+  rename(psim7 = psim_07_m)
+
+
+ggplot(ppet_df %>% filter(speiJu_class != 2),
+       aes(x = psim7, y = YieldEffect, group = as.factor(speiJu_class), 
+           color =  as.factor(speiJu_class))) +
+  geom_line() + 
+  geom_rug() +
+  geom_line(data = scymYield_addMe, col = 'gray50') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  scale_color_manual(values = c('blue','#f4a582','red'),
+                     labels = c('wet','drier','very dry')) +
+  facet_wrap(~speiJu_class, nrow = 1) + 
+  coord_cartesian(ylim=c(-.325, 0.3)) +
+  ylab('Yield Effect (t/ha)') + xlab('July Depth to Water (m)') +
+  theme_bw() +  theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank(),
+                     text = element_text(size = 14),
+                     strip.background = element_blank(),
+                     strip.text.x = element_blank())  
+
+
+ 
+```
+

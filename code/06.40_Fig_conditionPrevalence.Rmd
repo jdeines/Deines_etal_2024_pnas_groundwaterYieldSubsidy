@@ -1,0 +1,248 @@
+---
+title: "Fig: Prevalence of subsidy conditions"
+author: "jill deines"
+date: "03/20/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: Compose figure demonstrating subsidy/penalty prevalence**
+
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/06.40_Fig_gwPrevalance/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+
+library(here)
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+# data for psim grids to assign status (with July WT and water deficit)
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+psim0 <- read_csv(paste0(repoDataDir,'/Fig4_psimGridData.csv'))
+
+
+# geo vis - spatial state boundaries and psim grid
+gisDir <- paste0(here::here(),'/data/gis/boundaries')
+statesAll <- read_sf(paste0(gisDir,'/States_continental.shp')) %>%
+  st_transform(5070)
+states <- statesAll  %>%
+  dplyr::filter(STATE_ABBR %in% c('IN','IA','IL','OH','MI','WI','MN','SD','MO', 'ND','NE','KS', 'KY')) 
+
+psimGrid <- read_sf(paste0(gisDir, '/psim_polygrid.shp')) %>%
+  st_transform(5070)
+
+```
+
+
+# Load PSIM and assign conditions
+
+```{r psimPrep}
+# subsidy bounds from ale plot scym (3.00, 6.30)
+zoneMin <- 1.05
+zoneMax <- 2.5
+
+# assign status-es to each psim grid-year
+psim <- psim0 %>%
+  mutate(gwSubsidy = case_when(WT_Jul_m >= zoneMin & WT_Jul_m <= zoneMax ~ 1),
+         gwPenalty = case_when(WT_Jul_m < zoneMin ~ 1),
+         weather2_dry = case_when(spei_ju1 <= -50 ~ 1),
+         weather3_xDry = case_when(spei_ju1 <= -150 ~ 1))
+
+```
+
+# gw occurance quantifier
+
+```{r gwQuant, figure.width = 6.5, dpi = 600, dev = c('png','pdf')}
+# how often do psim grid-years fall in penalty/subsidy zones?
+sum(psim$gwPenalty == 1, na.rm = T) / nrow(psim) * 100   
+sum(psim$gwSubsidy == 1, na.rm = T) / nrow(psim) * 100 
+
+# count #years for each grid
+gwFreq <- psim %>%
+  group_by(psim_id, state) %>%
+  summarize(a_subsidy = sum(gwSubsidy, na.rm = TRUE),
+            penalty = sum(gwPenalty, na.rm = TRUE)) %>%
+  ungroup()
+
+# add counts to spatial grid
+spatial_gwFreq <- psimGrid %>%
+  left_join(gwFreq)
+
+# long format amd prep for 0s to be NA
+spatialSubLong_gw <- spatial_gwFreq %>%
+  tidyr::gather(., key = type, value = value, a_subsidy:penalty) %>%
+  filter(!is.na(value)) %>%                      # remove cells with no data
+  mutate(value = case_when(value > 0 ~ value,    # make zero values na
+                           value == 0 ~ NA))
+
+# penalty and subsidy next to each other
+ggplot(spatialSubLong_gw) +
+  geom_sf(data = statesAll, fill = 'gray70')+ 
+  geom_sf(aes(fill = value), color = NA, lwd = 0) +
+  geom_sf(data = states, fill = NA)+ 
+  coord_sf(xlim = c(-451032.2, 1292431), ylim = c(1502428, 2929298)) +
+  facet_wrap(~type) +
+  scale_fill_fermenter(n.breaks = 8, palette = 'YlGnBu', na.value = 'gray10',
+                       direction = 1,
+                       breaks = c(1,3,6,9,12,15,18)) +
+    theme_bw() +  theme(strip.background = element_blank(),
+                        strip.text.x = element_blank()) 
+
+
+```
+
+# weather occurance quantifier
+
+```{r weatherQuant, figure.width = 6.5, dpi = 600, dev = c('png','pdf')}
+
+# how often do psim grid-years fall in weather zones
+sum(psim$weather2_dry == 1, na.rm = T) / nrow(psim)  * 100
+sum(psim$weather3_xDry == 1, na.rm = T) / nrow(psim)  * 100
+
+# count #years for each grid
+weatherFreq = psim %>%
+  group_by(psim_id, state) %>%
+  summarize(weather2_dry = sum(weather2_dry, na.rm = TRUE),
+            weather3_xDry = sum(weather3_xDry, na.rm = TRUE)) %>%
+  ungroup()
+
+
+# add counts to spatial grid
+spatialSub_weather <- psimGrid %>%
+  left_join(weatherFreq)
+
+
+# long format
+spatialSubLong_w <- spatialSub_weather %>%
+  tidyr::gather(., key = type, value = value, weather2_dry:weather3_xDry) %>%
+  filter(!is.na(value)) %>%                      # remove cells with no data
+  mutate(value = case_when(value > 0 ~ value,    # make zero values na
+                           value == 0 ~ NA))
+
+ggplot(spatialSubLong_w ) +
+  geom_sf(data = statesAll, fill = 'gray70')+ 
+  geom_sf(aes(fill = value), color = NA, lwd = 0) +
+  geom_sf(data = states, fill = NA)+ 
+  coord_sf(xlim = c(-451032.2, 1292431), ylim = c(1502428, 2929298)) +
+  facet_wrap(~type) +
+  scale_fill_fermenter(n.breaks = 8, palette = 'YlOrRd', na.value = 'gray10',
+                       direction = 1,
+                       breaks = c(1,3,6,9,12,15,18)) +
+    theme_bw() +  theme(strip.background = element_blank(),
+                        strip.text.x = element_blank()) 
+
+```
+
+
+# both quantifier
+
+```{r bothQuant, figure.width = 6.5, dpi = 600}
+
+psim_subsidyWeather <- psim %>%
+  mutate(subsidy2 = case_when(weather2_dry == 1 & gwSubsidy == 1 ~ 1),
+         subsidy3 = case_when(weather3_xDry == 1 & gwSubsidy ==1 ~1))
+
+sum(psim_subsidyWeather$subsidy2 == 1, na.rm = T) / nrow(psim_subsidyWeather)  * 100 
+sum(psim_subsidyWeather$subsidy3 == 1, na.rm = T) / nrow(psim_subsidyWeather)  * 100
+
+
+psim_subsidyFreq = psim_subsidyWeather %>%
+  group_by(psim_id, state) %>%
+  summarize(subsidy2 = sum(subsidy2, na.rm = TRUE),
+            subsidy3 = sum(subsidy3, na.rm = TRUE)) %>%
+  ungroup()
+
+
+spatialSub <- psimGrid %>%
+  left_join(psim_subsidyFreq)
+
+# long format
+spatialSubLong <- spatialSub %>%
+  tidyr::gather(., key = type, value = value, subsidy2:subsidy3)%>%
+  filter(!is.na(value)) %>%                      # remove cells with no data
+  mutate(value = case_when(value > 0 ~ value,    # make zero values na
+                           value == 0 ~ NA))
+
+
+
+ggplot(spatialSubLong) +
+  geom_sf(data = statesAll, fill = 'gray70')+ 
+  geom_sf(aes(fill = value), color = NA, lwd = 0) +
+  geom_sf(data = states, fill = NA)+ 
+  coord_sf(xlim = c(-451032.2, 1292431), ylim = c(1502428, 2929298)) +
+  facet_wrap(~type) +
+  scale_fill_fermenter(n.breaks = 8, palette = 'YlGnBu', na.value = 'gray10',
+                       direction = 1,
+                       breaks = c(1,3,6,9,12,15,18)) +
+    theme_bw() +  theme(strip.background = element_blank(),
+                        strip.text.x = element_blank()) 
+
+
+
+```
+
+## other ways to report
+
+
+* the average number of years that a site gets a subsidy
+* the percent of locations that have a subsidy at least 2/20 years. 
+
+
+```{r gridStats, fig.width = 5, fig.height = 3.5, dpi = 300, dev = c('png','pdf')}
+# annual subsidy
+psim_subsidyWeather
+
+# times by grid
+psim_subsidyFreq
+
+# average # times grid gets a subsidy ------
+summary(psim_subsidyFreq$subsidy2)
+
+# broken down by state
+gridFreqStats <- psim_subsidyFreq %>%
+  group_by(state) %>%
+  summarize(meanYearsWithSubsidy = mean(subsidy2, na.rm = TRUE),
+            medianYearsWithSubsidy = median(subsidy2, na.rm = TRUE)) %>%
+  arrange(-meanYearsWithSubsidy)
+gridFreqStats
+
+ggplot(psim_subsidyFreq,
+       aes(x = state, y = subsidy2/20*100, group = state)) +
+  geom_boxplot() +
+  geom_point(data = gridFreqStats,aes(y = meanYearsWithSubsidy/20*100), color = 'blue') +
+  geom_hline(yintercept = 34, color = 'red') +
+  ylab('Years with Subsidy (%)') + xlab('State') +
+  theme_bw()
+
+# number of times with 2/20
+sum(psim_subsidyFreq$subsidy2 >= 2)
+nrow(psim_subsidyFreq)
+
+9007/12063
+```
+
+
+
+
+
+
+
+

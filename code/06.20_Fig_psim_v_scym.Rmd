@@ -1,0 +1,82 @@
+---
+title: "Agreement: scym vs psim & apsim"
+author: "jill deines"
+date: "04/05/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal:  compare scym/psim agreement**
+
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/06.20_fig_psim_v_scym/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+
+library(RColorBrewer)
+library(knitr)
+
+library(patchwork)
+
+library(here)
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+cleanDir <- paste0(here::here(), '/data/analysisOutput_forFigs')
+
+# load data
+df_agreement <- read_csv(paste0(cleanDir,'/Figure2_agreementStats.csv'))
+```
+
+
+# manuscript figure
+
+```{r Figure2_agreement_July, fig.width = 6.5, fig.height = 2.5, dpi = 300, dev = c('pdf','png')}
+
+
+xLevels <- c('Wet','Normal','Dry','Very Dry')
+
+p_r2<- ggplot(df_agreement %>% arrange(psimType),
+       aes(x = factor(speiClass, level = xLevels), y = r2)) +
+  geom_line(aes(group = speiJu_class2), col = 'gray50') +
+  geom_point(aes(color = psimType),cex =3) +
+  ylim(0, .6) + xlab('') + 
+  labs(y = expression(paste('Variance Explained (', R^2, ')'))) +
+  scale_color_manual(values = c('#1f78b4','#ff7f00' )) +
+  theme_bw() + theme(legend.position = c(.4,.82),
+                     legend.title = element_blank(),
+                       panel.grid.major.x = element_blank(),
+                     legend.background = element_blank(),
+                     panel.grid.minor = element_blank()) 
+
+p_rmse <- ggplot(df_agreement %>% arrange(psimType),
+       aes(factor(speiClass, level = xLevels), y = rmse)) +
+  geom_line(aes(group = speiJu_class2), col = 'gray50') +
+  geom_point(aes(color = psimType),cex =3) +
+  ylim(0, 5) + xlab('') + ylab('RMSE (t/ha)') +
+  scale_color_manual(values = c('#1f78b4','#ff7f00' )) +
+  theme_bw() + theme(legend.position = 'none',
+                       panel.grid.major.x = element_blank(),
+                     panel.grid.minor = element_blank()) 
+
+p_r2 + p_rmse
+```
+
+
+

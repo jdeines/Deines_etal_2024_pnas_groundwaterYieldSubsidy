@@ -1,0 +1,283 @@
+---
+title: "fig: study area"
+author: "jill deines"
+date: "3/25/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: study area fig with water table / psim info**
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/06.10_fig_studyArea/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(rgdal)
+library(raster)
+library(stars)
+library(latticeExtra)
+library(RColorBrewer)
+
+library(here)
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+# repo gis data folder
+gisDir <- paste0(here::here(),'/data/gis')
+rasterDir <- paste0(gisDir,'/rasters_fig1')
+
+
+# geo vis - state boundaries
+boundDir <- paste0(gisDir,'/boundaries')
+
+
+```
+
+# plot specs
+```{r mapSpecs}
+## half of s dakota
+mapXLim <- c(-350000,1300000)
+mapYLim <- c(1450000,2950000)
+
+panelBackground <- 'gray30'
+stateLines <- 'gray10'
+stateFill <- 'gray50'
+pioneerOutline <- 'black'
+
+
+pal <- rev(brewer.pal(n = 9, name = 'Blues')[c(2,4,7,9)])
+
+
+# state outlines
+
+states2 <- read_sf(paste0(boundDir,'/States_continental.shp')) %>%
+  st_transform(5070)
+states_sp <- as(states2, 'Spatial')
+
+
+
+```
+
+
+# Histogram: monthly water tables
+from PSIMS run output
+
+## load and get stats
+gw distribution over growing season
+2010 and 2012
+
+```{r loadGetStats}
+
+
+may2010 <- raster(paste0(rasterDir,'/WT_May_2010.tif'))
+may2012 <- raster(paste0(rasterDir,'/WT_May_2012.tif'))
+
+
+june2010 <- raster(paste0(rasterDir,'/WT_June_2010.tif'))
+june2012 <- raster(paste0(rasterDir,'/WT_June_2012.tif'))
+
+
+july2010 <- raster(paste0(rasterDir,'/WT_July_2010.tif'))
+july2012 <- raster(paste0(rasterDir,'/WT_July_2012.tif'))
+
+
+aug2010 <- raster(paste0(rasterDir,'/WT_Aug_2010.tif'))
+aug2012 <- raster(paste0(rasterDir,'/WT_Aug_2012.tif'))
+
+
+# 2010 summary
+may10 <- as.data.frame(summary(may2010))
+jun10 <- as.data.frame(summary(june2010))
+jul10 <- as.data.frame(summary(july2010))
+aug10 <- as.data.frame(summary(aug2010))
+stats2010 <- cbind(rownames(may10),may10,jun10,jul10, aug10)
+names(stats2010) <- c('summary','5-May','6-June','7-July','8-Aug')
+rownames(stats2010) <- 1:6
+stats2010$year <- 2010
+
+
+may12 <- as.data.frame(summary(may2012))
+jun12 <- as.data.frame(summary(june2012))
+jul12 <- as.data.frame(summary(july2012))
+aug12 <- as.data.frame(summary(aug2012))
+stats2012 <- cbind(rownames(may12),may12,jun12,jul12, aug12)
+names(stats2012) <- c('summary','5-May','6-June','7-July','8-Aug')
+rownames(stats2012) <- 1:6
+stats2012$year <- 2012
+
+statsBoth <- stats2010 %>% bind_rows(stats2012)
+
+statsLong <- statsBoth %>%
+  filter(summary != "NA's") %>%
+  tidyr::gather(., key = month, value = value, contains('-')) %>%
+  tidyr::spread(., key = summary, value = value)
+
+```
+
+## histogram
+
+```{r boxplot, fig.width = 1.1, fig.height = 4.1, dpi = 300, dev = c('png','pdf')}
+ggplot(statsLong,
+       aes(x = month,  group = interaction(month,year),
+           ymin = `Min.`, lower = `1st Qu.`, middle = Median, upper = `3rd Qu.`, ymax = `Max.`)) +
+  facet_wrap(~year, nrow = 2) +
+  ylim(4, 0) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  ylab('Depth to Water (m)') + xlab('Month') +
+  geom_boxplot(stat = 'identity') +
+  theme_bw() + theme(axis.text = element_text(size = 8),
+                     axis.title = element_text(size = 9))
+```
+
+
+# individual MONTHS - maps
+
+## 2010
+
+
+```{r june_2010, fig.width = 5, fig.height = 6, dpi = 300}
+june2010p <- projectRaster(june2010, crs = projection(states_sp))
+
+spplot(june2010p, axes = TRUE, col.regions= pal,
+       at=c(0,1,2,3,4),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+```{r july_2010, fig.width = 5, fig.height = 6, dpi = 300}
+july2010p <- projectRaster(july2010, crs = projection(states_sp))
+
+spplot(july2010p, axes = TRUE, col.regions= pal,
+       at=c(0,1,2,3,4),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+## 2012
+
+
+
+```{r june_2012, fig.width = 5, fig.height = 6, dpi = 300}
+june2012p <- projectRaster(june2012, crs = projection(states_sp))
+
+spplot(june2012p, axes = TRUE, col.regions= pal,
+       at=c(0,1,2,3,4),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+        xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+```{r july_2012, fig.width = 5, fig.height = 6, dpi = 300}
+july2012p <- projectRaster(july2012, crs = projection(states_sp))
+
+spplot(july2012p, axes = TRUE, col.regions= pal,
+       at=c(0,1,2,3,4),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+## legend plot
+
+```{r wt_legend, fig.width = 3, dev =c('pdf')}
+june2010p <- projectRaster(june2010, crs = projection(states_sp))
+
+spplot(june2010p, axes = TRUE, col.regions= pal,
+       at=c(0,1,2,3,4),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 15000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+
+# Yield Maps
+for right size/map limits
+
+```{r yield_load}
+y2010 <- raster(paste0(rasterDir,'/2010_scym2020_20201107_10000m_NA.tif'))
+y2010[y2010<0] <- NA
+
+y2012 <- raster(paste0(rasterDir,'/2012_scym2020_20201107_10000m_NA.tif'))
+y2012[y2012<0] <- NA
+y2012[y2012<3] <- 3
+
+cornMin <- 3
+cornMax <- 18
+colorbreaks = 20
+```
+
+```{r yield2010, fig.width = 5, fig.height = 6, dpi = 300}
+
+spplot(y2010, axes = TRUE,
+       at=seq(cornMin, cornMax, (-cornMin + cornMax)/colorbreaks),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+```{r yield2012, fig.width = 5, fig.height = 6, dpi = 300}
+spplot(y2012, axes = TRUE,
+       at=seq(cornMin, cornMax, (-cornMin + cornMax)/colorbreaks),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 1500000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+```{r yieldlegend, fig.width = 3, fig.height = 6, dpi = 300, dev = 'pdf'}
+spplot(y2012, axes = TRUE,
+       at=seq(cornMin, cornMax, (-cornMin + cornMax)/colorbreaks),
+       colorkey = list(space = 'bottom'),
+       maxpixels = 15000,
+       xlim = mapXLim, ylim = mapYLim,
+       par.settings = list(panel.background = list(col=panelBackground))) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=stateLines)) +
+  latticeExtra::layer(sp.polygons(states_sp, lwd=.8, col=NA, fill = stateFill), under=T)
+```
+
+
+
+
