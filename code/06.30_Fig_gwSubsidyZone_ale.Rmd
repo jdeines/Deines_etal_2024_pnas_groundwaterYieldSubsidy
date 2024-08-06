@@ -47,7 +47,7 @@ scymYield_df_enhanced <- read_csv(paste0(repoDataDir,'/Fig3a_scym_yieldVsWT_alep
 
 
 psimYield_df <- read_csv(paste0(repoDataDir,'/Fig3b_psim_yieldVsWT_aleplot_may2024_standardSoilM.csv'))
-sa_master <- read_csv(paste0(repoDataDir,'/Fig3b_psims_SA_noDeep_nov23.csv'))
+sa_master <- read_csv(paste0(repoDataDir,'/Fig3b_psims_SA_noDeep_may24_cor60.csv'))
 
 scym_byPPET <- read_csv(paste0(repoDataDir,'/Fig3d_scym_yieldVsWT_byPPET_aleplot_oct23_35knoDupe.csv'))
 
@@ -150,7 +150,7 @@ max(scymYield_df_enhanced$YieldEffect) + 0.005
 
 ```{r Fig_psimSubsidy, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
 
-noisy <- sa_master %>% filter(model == 'WT_Jul_cor70')
+noisy <- sa_master 
 
 psim <- ggplot(psimYield_df,
        aes(x = psim7, y = YieldEffect)) +
