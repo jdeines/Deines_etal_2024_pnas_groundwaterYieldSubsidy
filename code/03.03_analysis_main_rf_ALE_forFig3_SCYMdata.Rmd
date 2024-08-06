@@ -1,0 +1,727 @@
+---
+title: "formal analysis - random forest ALE, SCYM data"
+author: "jill deines"
+date: "03/20/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: use random forests to identify effects of WT using the SCYM yield data**
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/03.03_analysis_main_rf_ale/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(earth)
+library(randomForest)
+
+library(here)
+library(patchwork)
+
+
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+# for master file
+masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+
+# intermediate folder for large objects (eg rf output)
+scratchFolder <- paste0(masterDataDir,'/intermediates')
+# make scratch folder if necessary
+dir.create(file.path(scratchFolder), showWarnings = FALSE)
+
+# output folder: clean df for figures
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+
+```
+
+# functions
+helper functions for processing ALEplot output
+
+```{r funs_ale}
+library(ALEPlot)
+aleToDf <- function(aleList, xname){
+  df <- data.frame(xname = aleList$x.values,
+                      'YieldEffect' = aleList$f.values)
+  names(df)[1] <- xname
+  return(df)
+}
+
+# prep prediction function for ALEplot
+yhat <- function(X.model, newdata) as.numeric(predict(X.model, newdata, type = 'response'))
+
+```
+
+# SCYM
+
+## Variable selection
+
+load master data file and use MARS for variable selection
+
+note water deficit is named "spei" in the df
+
+RUN 1X - OUTPUT STORED AS RDS FOR LATER USE
+
+```{r variableSelection, eval = FALSE}
+master <- readRDS(paste0(masterDataDir,'/masterData_pointSample.rds'))
+
+# identify variables to consider (listed in Table S1)
+
+df_table1var <- master %>%
+  dplyr::select(c(yield_tha, nccpi3corn, rootznaws, JJAradn, year, pr_early, pr_grow,
+                  GDD_8_30, spei_ju1, spei_au2, soc0100, drclasscd, contains('tmin'),
+                   contains('tmax'), contains('vpd'), contains('ppt'), tpi,  slope,
+                   psim_07_m, psim_05_m, psim_06_m, psim_08_m, psim_14_m)) %>%
+  tidyr::drop_na()
+
+# mars for var selection
+set.seed(5)
+marsAll <- earth::earth(yield_tha ~ ., data = df_table1var, degree = 2)
+summary(marsAll)
+ev <- earth::evimp(marsAll) # estimate variable importance
+plot(ev)
+ev
+
+saveRDS(marsAll, paste0(scratchFolder, '/marsOutput_scymDf_forVarSel.rds'))
+```
+
+
+
+## RF model
+run 1x - output stored as RDS for later use
+
+Note: July soil moisture from the Standard Crop Model is added as a variable based on helpful reviewer comments and strategy to examine direct vs soil moisture pathways for groundwater contributions
+
+```{r scym_rf, eval = FALSE}
+# load MARS output for selected variables
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+summary(marsAll)
+ev <- earth::evimp(marsAll) # estimate variable importance
+plot(ev)
+ev
+
+# vector of variable names
+envvars0 <- rownames(ev)[1:17]
+
+
+# load master df and add in july soil moisture from psim without wt
+scym_df0 <- readRDS(paste0(masterDataDir,'/masterData_pointSample.rds'))
+
+
+# get apsim soil moisture: standard model
+apsim_sm <- read_csv(paste0(masterDataDir,'/standardModel_JulySoilMoisture.csv'))
+
+
+scym_df <- scym_df0 %>%
+  left_join(apsim_sm)
+
+# add standard model soil moistures to variable vector
+envvars <- c(envvars0, 'SW1m_Jul')
+
+
+# prep random forest - df with only wanted variables
+df_20201  <- scym_df %>%
+  dplyr::select(c(yield_tha, all_of(envvars), spei_ju1))
+
+# run and save RF
+set.seed(5)
+ncols <- dim(df_20201)[2]
+rf_scym20 <- randomForest(x = df_20201[,2:ncols],
+                         y = df_20201$yield_tha,
+                         ntree = 100,
+                         importance = FALSE,
+                         nodesize = 10)
+rf_scym20
+saveRDS(rf_scym20, paste0(scratchFolder,'/rf1_scymPointRf_marsVars_standardSoilMoisture_ns10_100t.RDS'))
+
+
+```
+
+
+## scym  aleplots - 
+
+```{r aleTest_scym2020}
+# load data and intermediate model outputs --------------
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+envvars0 <- rownames(ev)[1:17]
+envvars <- c(envvars0, 'SW1m_Jul', 'spei_ju1')
+
+# df: master plus Standard Model Soil Moisture
+scym_df0 <- readRDS(paste0(masterDataDir,'/masterData_pointSample.rds')) %>% ungroup()
+apsim_sm <- read_csv(paste0(masterDataDir,'/standardModel_JulySoilMoisture.csv'))
+scym_df <- scym_df0 %>%
+  left_join(apsim_sm)
+
+mean(scym_df$yield_tha)
+
+# df
+Xdat_scym  <- scym_df %>%
+  dplyr::select(c(yield_tha, all_of(envvars))) %>%
+  tidyr::drop_na() %>%
+  as.data.frame()
+
+# rf model
+rfModel_scym <- readRDS(paste0(scratchFolder,'/rf1_scymPointRf_marsVars_standardSoilMoisture_ns10_100t.RDS'))
+
+rfModel_scym
+
+
+
+# ALE plot for WT variable (psim_07_m, column = J = 17)
+names(Xdat_scym)
+
+ALEPlot_scym <- ALEPlot(X = Xdat_scym, X.model = rfModel_scym, J = 17, 
+                        pred.fun = yhat, K = 100)
+
+# rearrange and visualize
+scymYield_df <- aleToDf(ALEPlot_scym, 'psim7') 
+
+ggplot(scymYield_df, aes(x = psim7, y = YieldEffect)) +
+  geom_line() + geom_rug() + theme_bw()
+max(scymYield_df$YieldEffect)
+
+
+
+# save data for final fig
+write_csv(scymYield_df, paste0(repoDataDir,'/Fig3a_scym_yieldVsWT_aleplot_may2024_35kNoDupe_standardSoilM.csv'))
+
+```
+
+## BOOTSTRAP
+figure S1b
+
+```{r aleBOOT_scym, eval = FALSE}
+nsamples <- 200
+n_boot <- nrow(Xdat_scym)
+boots <- list()
+for (i in 1:nsamples){
+  # resample
+  resampled <- Xdat_scym %>%
+    slice_sample(n = n_boot, replace = TRUE)
+  
+  ale <- ALEPlot(X = resampled, X.model = rfModel_scym,
+                            J = 17, pred.fun = yhat, K = 100)
+  ale_df <- aleToDf(ale, 'psim7') 
+  
+  df_out <- ale_df %>% mutate(bootN = i)
+  
+  boots[[i]] <- df_out
+}
+
+
+
+allBoots <- do.call('rbind', boots)
+
+ggplot(allBoots,
+       aes(x = psim7, y = YieldEffect, group = as.factor(bootN), color =  bootN)) +
+  geom_line() + theme_bw() + scale_color_viridis_c()
+
+
+# save data for final fig
+write_csv(allBoots, paste0(repoDataDir,'/Fig3a_Bootstrap_',nsamples,
+                           '_may2024_standardSoilM.csv'))
+
+```
+
+### analyze bootstrap
+```{r bootstrap, dpi = 300, fig.width = 3.5, fig.height = 3}
+nsamples <- 200
+allBoots <- read_csv(paste0(repoDataDir,'/Fig3a_Bootstrap_',nsamples,
+                           '_may2024_standardSoilM.csv'))
+
+
+p_bootStrap <- ggplot(allBoots,
+       aes(x = psim7, y = YieldEffect, group = as.factor(bootN))) +
+  geom_line(alpha = .15) + 
+  geom_hline(yintercept = -0.025, linetype = 'dashed', color = 'red') +
+    geom_vline(xintercept = 1.47, linetype = 'dashed', color = 'blue') +
+   # geom_hline(yintercept = .05) +
+      geom_hline(yintercept = 0, linetype = 'dotted') +
+  theme_bw() + xlab('Depth to Water Table (m)') + ylab('Yield Effect (t/ha)') +
+  scale_color_viridis_c()
+p_bootStrap
+
+# get maxima
+boot_max <- allBoots %>%
+  group_by(bootN) %>%
+  slice_max(YieldEffect) %>%
+  mutate(effectSize = YieldEffect + 0.025)
+quantile(boot_max$effectSize, c(.025, .975)) 
+```
+
+
+## Figure 3d: wt by spei scym
+
+```{r scym_wtByClim_agu}
+
+#  by climate ---------------------
+Xdat3 <- Xdat_scym %>%
+  mutate(spei_tile = ntile(spei_ju1, 5),
+         vpd_tile = ntile(vpd_july, 5),
+        speiJu_class = case_when(spei_ju1 >= 0 ~ 1,
+                                spei_ju1 < 0  & spei_ju1 >= -50 ~ 2,
+                                spei_ju1 < -50 & spei_ju1 >= -150 ~ 3,
+                                spei_ju1 < -150 ~ 4)) %>%
+  mutate(speiClass = case_when(speiJu_class == 1 ~ 'wet',
+                               speiJu_class == 2 ~ 'normal',
+                               speiJu_class == 3 ~ 'dry',
+                               speiJu_class == 4 ~ 'very dry'),
+         gwClass = case_when(psim_07_m < 1.1 ~ 1,
+                             psim_07_m >= 1.1 & psim_07_m <2.5 ~ 2,
+                             psim_07_m >=2.5 ~ 3),
+         yearGroup = case_when(year < 2009 ~ 1,
+                               year >= 2009 ~ 2))
+
+# mean yield in dry
+table(Xdat3$speiJu_class)
+veryDry <- Xdat3 %>% filter(speiJu_class == 4)
+summary(veryDry$yield_tha)
+
+
+names(Xdat3)
+psim_speiList <- list()
+for(i in 1:4) {
+  y <- i
+  df_year <- Xdat3 %>% filter(speiJu_class == y)
+  ale_year <- aleToDf(ALEPlot(X = df_year, X.model = rfModel_scym, J = 17, pred.fun = yhat, K = 40), 'psim_07_m')
+  ale_year$speiJu_class <- y
+  psim_speiList[[i]] <- ale_year
+}
+psim_spei <- do.call('rbind', psim_speiList)
+
+
+
+# save data for final fig
+write_csv(psim_spei, paste0(repoDataDir,'/Fig3d_scym_yieldVsWT_byPPET_aleplot_oct23_35knoDupe.csv'))
+
+
+aguP <- ggplot(psim_spei,
+       aes(x = psim_07_m, y = YieldEffect, group = as.factor(speiJu_class), 
+           color =  as.factor(speiJu_class))) +
+  geom_line() + 
+    geom_hline(yintercept = 0, linetype = 'dashed') +
+  scale_color_manual(values = c('blue','gray40','#f4a582','red'),
+                     labels = c('wet','normal','drier','very dry')) +
+  ylab('Yield Effect (t/ha)') + xlab('July Depth to Water (m)') +
+  theme_bw() +  theme(legend.title = element_blank(),
+                      legend.position = c(.7,.3),
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank(),
+                     text = element_text(size = 14)) 
+aguP
+
+```
+
+
+
+# psim WT model
+
+## random forest
+
+```{r psim_rf, eval = FALSE}
+psimDiffs0 <- readRDS(paste0(cleanDir,'/intermediateGridPoints/hydroCorn_masterDataGrid_v02_V05_scym9_detrended_withPsims_weatherGroups_LAI_19992020.rds'))
+
+# same eyar as scym
+psim <- psimDiffs0 %>% filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>%
+  left_join(psim_sm %>% dplyr::select(psim_id, year, SW1m_Jul))
+
+# load mars
+marsAll <- readRDS( paste0(scratchFolder0,'/scymP_mars_c1_35kSub_train2_scym2020.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1','SW1m_Jul')
+
+# prep df for rf
+psim_df  <- psim %>%
+  dplyr::select(c(psim_WT_tha, all_of(varsWanted3) )) %>% tidyr::drop_na()
+nrow(psim_df)
+
+set.seed(5)
+ncols <- dim(psim_df)[2]
+rf_psim <- randomForest(x = psim_df[,2:ncols],
+                         y = psim_df$psim_WT_tha,
+                         ntree = 100,
+                         importance = FALSE,
+                        nodesize = 10)
+rf_psim
+saveRDS(rf_psim, paste0(scratchFolder,'/rf1_psim_marsVars_spei_WT_ns10_t100_May2024_standardSoilM.RDS'))
+```
+
+## psim ale plots
+
+```{r psimAle}
+psimDiffs0 <- readRDS(paste0(cleanDir,'/intermediateGridPoints/hydroCorn_masterDataGrid_v02_V05_scym9_detrended_withPsims_weatherGroups_LAI_19992020.rds'))
+
+
+# load mars
+marsAll <- readRDS( paste0(scratchFolder,'/scymP_mars_c1_35kSub_train2_scym2020.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1')
+
+
+# same eyar as scym
+Xdat <- psimDiffs0 %>%
+  filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>%
+  left_join(psim_sm %>% dplyr::select(psim_id, year, SW1m_Jul)) %>%
+  dplyr::select(c(psim_WT_tha, psim_noWT_tha, all_of(varsWanted3) )) %>%
+  mutate(sim_diff = psim_WT_tha - psim_noWT_tha) %>%
+  tidyr::drop_na() %>%
+  as.data.frame()
+
+# model
+rfModel <- readRDS( paste0(scratchFolder,'/rf1_psim_marsVars_spei_WT_ns10_t100_May2024_standardSoilM.RDS'))
+rfModel
+
+names(Xdat)
+
+# psim - change with WT
+ALEPlot_psim <- ALEPlot(X = Xdat, X.model = rfModel, J = 19, pred.fun = yhat, K = 100)
+
+psimYield_df <- aleToDf(ALEPlot_psim, 'psim7')
+
+ggplot(psimYield_df, aes(x = psim7, y = YieldEffect)) +
+  geom_line() + geom_rug() + theme_bw()
+
+psimPlot <- ggplot(psimYield_df,
+       aes(x = psim7, y = YieldEffect)) +
+  # geom_rect(xmin = .775, xmax = 2.48, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.035, linetype = 'dashed', color = 'red') +
+  # geom_vline(xintercept = 1.23, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank()) +
+  ggtitle('PSIMS Simulations')
+psimPlot
+
+# simulated difference
+ggplot(Xdat, aes(x = WT_Jul_m, y = sim_diff)) +
+  geom_smooth()
+
+
+# # change with precip
+# ALEPlot_pr <- ALEPlot(X = Xdat, X.model = rfModel, J = 8, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_pr <- aleToDf(ALEPlot_pr, 'pr_grow') %>%
+#   mutate(sd = sd(psimDiffs0 %>% 
+#                    filter(year < 2019 & scym2020_10prct == 1) %>%
+#                    pull(pr_grow))) %>%
+#   mutate(Effect_sd = YieldEffect / sd)
+# 
+# ggplot(psimYield_df_pr, aes(x = pr_grow, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+# 
+# # change with july vpd
+# ALEPlot_vpd <- ALEPlot(X = Xdat, X.model = rfModel, J = 3, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_vpd <- aleToDf(ALEPlot_vpd, 'vpd_july') 
+# 
+# ggplot(psimYield_df_vpd, aes(x = vpd_july, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+# 
+# 
+# # change with nccpi
+# ALEPlot_nccpi <- ALEPlot(X = Xdat, X.model = rfModel, J = 7, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_nccpi <- aleToDf(ALEPlot_nccpi, 'nccpi') 
+# 
+# ggplot(psimYield_df_nccpi, aes(x = nccpi, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+
+write_csv(psimYield_df,paste0(repoDataDir,'/Fig3b_psim_yieldVsWT_aleplot_may2024_standardSoilM.csv'))
+
+```
+
+# psim WT model - scym yields
+
+## random forest
+
+```{r psim_rf_scym, eval = FALSE}
+psimDiffs0 <- readRDS(paste0(cleanDir,'/intermediateGridPoints/hydroCorn_masterDataGrid_v02_V05_scym9_detrended_withPsims_weatherGroups_LAI_19992020.rds'))
+
+# get psim soil moisture
+cleanDir2 <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/psims/processed'
+psim_noWT <- readRDS(paste0(cleanDir2,'/psims_noWT_1984-2020_20240518.rds'))
+psim_sm <- psim_noWT %>% dplyr::select(psim_id,  year, contains('SW1'))
+
+# same eyar as scym
+psim <- psimDiffs0 %>% filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>%
+  left_join(psim_sm %>% dplyr::select(psim_id, year, SW1m_Jul))
+
+# load mars
+marsAll <- readRDS( paste0(scratchFolder0,'/scymP_mars_c1_35kSub_train2_scym2020.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1','SW1m_Jul')
+
+# prep df for rf
+psim_df  <- psim %>%
+  dplyr::select(c(yield_tha, all_of(varsWanted3) )) %>% tidyr::drop_na()
+nrow(psim_df)
+
+set.seed(5)
+ncols <- dim(psim_df)[2]
+rf_psim <- randomForest(x = psim_df[,2:ncols],
+                         y = psim_df$yield_tha,
+                         ntree = 100,
+                         importance = FALSE,
+                        nodesize = 10)
+rf_psim
+saveRDS(rf_psim, paste0(scratchFolder,'/rf1_psim_marsVars_spei_WT_ns10_t100_May2024_standardSoilM_scymVersion.RDS'))
+```
+
+## psim ale plots - scymv ersion
+
+```{r psimAle_scym}
+psimDiffs0 <- readRDS(paste0(cleanDir,'/intermediateGridPoints/hydroCorn_masterDataGrid_v02_V05_scym9_detrended_withPsims_weatherGroups_LAI_19992020.rds'))
+
+
+# load mars
+marsAll <- readRDS( paste0(scratchFolder0,'/scymP_mars_c1_35kSub_train2_scym2020.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1','SW1m_Jul')
+
+# get psim soil moisture
+cleanDir2 <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/psims/processed'
+psim_noWT <- readRDS(paste0(cleanDir2,'/psims_noWT_1984-2020_20240518.rds'))
+psim_sm <- psim_noWT %>% dplyr::select(psim_id,  year, contains('SW1'))
+
+
+# same eyar as scym
+Xdat <- psimDiffs0 %>%
+  filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>%
+  left_join(psim_sm %>% dplyr::select(psim_id, year, SW1m_Jul)) %>%
+  dplyr::select(c(yield_tha, all_of(varsWanted3) )) %>%
+  tidyr::drop_na() %>%
+  as.data.frame()
+
+# model
+rfModel <- readRDS( paste0(scratchFolder,'/rf1_psim_marsVars_spei_WT_ns10_t100_May2024_standardSoilM_scymVersion.RDS'))
+rfModel
+
+names(Xdat)
+
+# psim - change with WT
+ALEPlot_psim <- ALEPlot(X = Xdat, X.model = rfModel, J = 18, pred.fun = yhat, K = 100)
+
+psimYield_df <- aleToDf(ALEPlot_psim, 'psim7')
+
+ggplot(psimYield_df, aes(x = psim7, y = YieldEffect)) +
+  geom_line() + geom_rug() + theme_bw()
+
+scym <- ggplot(psimYield_df,
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.05, xmax = 2.52, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  coord_cartesian(ylim=c(-.325, 0.4)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.025, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.47, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth to Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank()) +
+  ggtitle('SCYM Observations')
+
+scym
+
+max(psimYield_df$YieldEffect)
+psimYield_df %>%
+  slice_max(YieldEffect)
+max(psimYield_df$YieldEffect) + 0.025
+
+
+
+# simulated difference
+ggplot(Xdat, aes(x = WT_Jul_m, y = sim_diff)) +
+  geom_smooth()
+
+
+# # change with precip
+# ALEPlot_pr <- ALEPlot(X = Xdat, X.model = rfModel, J = 8, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_pr <- aleToDf(ALEPlot_pr, 'pr_grow') %>%
+#   mutate(sd = sd(psimDiffs0 %>% 
+#                    filter(year < 2019 & scym2020_10prct == 1) %>%
+#                    pull(pr_grow))) %>%
+#   mutate(Effect_sd = YieldEffect / sd)
+# 
+# ggplot(psimYield_df_pr, aes(x = pr_grow, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+# 
+# # change with july vpd
+# ALEPlot_vpd <- ALEPlot(X = Xdat, X.model = rfModel, J = 3, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_vpd <- aleToDf(ALEPlot_vpd, 'vpd_july') 
+# 
+# ggplot(psimYield_df_vpd, aes(x = vpd_july, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+# 
+# 
+# # change with nccpi
+# ALEPlot_nccpi <- ALEPlot(X = Xdat, X.model = rfModel, J = 7, pred.fun = yhat, K = 100)
+# 
+# psimYield_df_nccpi <- aleToDf(ALEPlot_nccpi, 'nccpi') 
+# 
+# ggplot(psimYield_df_nccpi, aes(x = nccpi, y = YieldEffect)) +
+#   geom_line() + geom_rug() + theme_bw()
+
+write_csv(psimYield_df,paste0(repoDataDir,'/Fig3b_psim_yieldVsWT_aleplot_may2024_standardSoilM.csv'))
+
+```
+
+# All Together
+
+AGU ALE plot
+
+## scym only
+
+
+
+```{r Fig_scymSubsidy, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+sd_master <- scymYield_df %>% mutate(model = '1SCYM point') %>%
+  bind_rows(psimYield_df %>% mutate(model = '2PSIM Yield'))
+
+ggplot(sd_master %>% filter(model == '1SCYM point'),
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.05, xmax = 2.55, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.035, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.47, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth To Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank())
+
+
+```
+
+## psim only
+
+```{r Fig_psimSubsidy, fig.width = 3.25, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+sd_master <- scymYield_df %>% mutate(model = '1SCYM point') %>%
+  bind_rows(psimYield_df %>% mutate(model = '2PSIM Yield'))
+
+ggplot(sd_master %>% filter(model == '2PSIM Yield'),
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = .75, xmax = 2.55, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  coord_cartesian(ylim = c(-.75,.6)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.07, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.25, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth To Water (m)') + ylab('Yield Effect (t/ha)') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank())
+
+
+```
+
+## scym and psim
+
+```{r agu_psim_scym, fig.height = 5, fig.width = 3.25, dpi = 300, dev = c('pdf','png')}
+sd_master <- scymYield_df %>% mutate(model = '1SCYM point') %>%
+  bind_rows(psimYield_df %>% mutate(model = '2PSIM Yield'))
+
+aguPlot <- ggplot(sd_master,
+       aes(x = psim7, y = YieldEffect)) +
+  geom_line() +
+  facet_wrap(~model, nrow = 2, scales = 'free_y') +
+  xlab('July Depth To Water (m)') + ylab('Yield Effect (t/ha)') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank(),
+                    strip.background = element_blank(),
+  strip.text.x = element_blank(),
+                     text = element_text(size = 14)) 
+aguPlot
+
+# ggsave(filename = '/Users/deinesji/Dropbox/4Deines/miscPresentations/20211210_AGU21/talk_ExtremeEvents/input/aleplot.png',
+#        plot = aguPlot,
+#        width = 3.25, height = 5, units = 'in')
+```
+
+
+Fig manuscript
+
+```{r Fig_scymPsimSubsidy, fig.width = 6.5, fig.height = 4, dpi = 300, dev = c('pdf','png')}
+
+ggplot(sd_master ,#%>% filter(model == '1SCYM point'),
+       aes(x = psim7, y = YieldEffect)) +
+   geom_rect(xmin = 1.05, xmax = 2.75, ymin = -Inf, ymax = Inf, fill = 'lightblue') +
+  geom_line() +
+  geom_rug() +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = -.0425, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 1.5, linetype = 'dashed', color = 'blue') +
+    xlab('July Depth To Water (m)') + ylab('Yield Effect (t/ha)') +
+  facet_wrap(~model, scales = 'free_y') +
+  theme_bw()+ theme(legend.position = 'none',
+                      panel.grid.major.x = element_blank(),
+                      panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                      panel.grid.minor.x = element_blank())
+
+
+```
+
+
+
+
+
+
+

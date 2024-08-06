@@ -1,0 +1,158 @@
+---
+title: "formal analysis - random forest ALE, crop model data"
+author: "jill deines"
+date: "03/20/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: use random forests to identify effects of WT using the modeled yield data**
+
+Includes the sensitivity analysis/noisey simulations addition
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/03.03_analysis_main_rf_ale/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(earth)
+library(randomForest)
+
+library(here)
+library(patchwork)
+
+
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+# for master file
+masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+
+# intermediate folder for large objects (eg rf output)
+scratchFolder <- paste0(masterDataDir,'/intermediates')
+# make scratch folder if necessary
+dir.create(file.path(scratchFolder), showWarnings = FALSE)
+
+# output folder: clean df for figures
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+
+```
+
+# functions
+helper functions for processing ALEplot output
+
+```{r funs_ale}
+library(ALEPlot)
+aleToDf <- function(aleList, xname){
+  df <- data.frame(xname = aleList$x.values,
+                      'YieldEffect' = aleList$f.values)
+  names(df)[1] <- xname
+  return(df)
+}
+
+# prep prediction function for ALEplot
+yhat <- function(X.model, newdata) as.numeric(predict(X.model, newdata, type = 'response'))
+
+```
+
+
+# Crop Model (Enhanced with WT) model
+with soil moisture from standard model
+
+## random forest
+run 1x and save output for later
+
+```{r psim_rf, eval = FALSE}
+# load enhanced model and standard model soil moisture
+psimDiffs0 <- readRDS(paste0(masterDataDir,'/masterData_apsimGrid.rds'))
+apsim_sm <- read_csv(paste0(masterDataDir,'/standardModel_JulySoilMoisture.csv'))
+
+# filter years: same years as scym
+psim <- psimDiffs0 %>% filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>% 
+  left_join(apsim_sm)
+
+# load MARS output for selected variables
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1','SW1m_Jul')
+
+# prep df for rf (enhanced model yield = psim_WT_tha)
+psim_df  <- psim %>%
+  dplyr::select(c(psim_WT_tha, all_of(varsWanted3) )) %>% tidyr::drop_na()
+nrow(psim_df)
+
+set.seed(5)
+ncols <- dim(psim_df)[2]
+rf_psim <- randomForest(x = psim_df[,2:ncols],
+                         y = psim_df$psim_WT_tha,
+                         ntree = 100,
+                         importance = FALSE,
+                        nodesize = 10)
+rf_psim
+saveRDS(rf_psim, paste0(scratchFolder,'/rf1_apsimGrid_marsVars_spei_WT_ns10_t100_May2024_standardSoilM.RDS'))
+```
+
+## psim ale plots
+
+```{r psimAle}
+# load enhanced model and standard model soil moisture
+psimDiffs0 <- readRDS(paste0(masterDataDir,'/masterData_apsimGrid.rds'))
+apsim_sm <- read_csv(paste0(masterDataDir,'/standardModel_JulySoilMoisture.csv'))
+
+# filter years: same years as scym
+psim <- psimDiffs0 %>% filter(year < 2019 & scym2020_10prct == 1) %>%
+  dplyr::select(-contains('SW1')) %>% 
+  left_join(apsim_sm)
+
+# trim for ale plot use
+Xdat <- psim %>%
+  dplyr::select(c(psim_WT_tha, psim_noWT_tha, all_of(varsWanted3) )) %>%
+  tidyr::drop_na() %>%
+  as.data.frame()
+
+
+# load MARS output for selected variables
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+varsWanted <- rownames(ev)[1:17]
+varsWanted2 <- varsWanted[!grepl('psim_07_m',varsWanted)]
+varsWanted3 <- c(varsWanted2, 'WT_Jul_m','spei_ju1','SW1m_Jul')
+
+
+# model
+rfModel <- readRDS( paste0(scratchFolder,'/rf1_apsimGrid_marsVars_spei_WT_ns10_t100_May2024_standardSoilM.RDS'))
+rfModel
+
+names(Xdat)
+
+# psim - change with WT
+ALEPlot_psim <- ALEPlot(X = Xdat, X.model = rfModel, J = 19, pred.fun = yhat, K = 100)
+psimYield_df <- aleToDf(ALEPlot_psim, 'psim7')
+
+
+
+write_csv(psimYield_df,paste0(repoDataDir,'/Fig3b_psim_yieldVsWT_aleplot_may2024_standardSoilM.csv'))
+
+```
+
+
+
+
+
+
