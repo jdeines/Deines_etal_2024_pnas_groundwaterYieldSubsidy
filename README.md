@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11393497.svg)](https://doi.org/10.5281/zenodo.11393497)
+
 # Deines, Archontoulis, Huber, & Lobell, PNAS
 ## Derived data, and analysis code
 
