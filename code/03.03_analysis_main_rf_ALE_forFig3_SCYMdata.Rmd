@@ -11,6 +11,8 @@ output:
 
 **Goal: use random forests to identify effects of WT using the SCYM yield data**
 
+Notes: includes both standard soil moisture (top) and enhanced model soil moisture (accountingn for capillary rise/water table; below)
+
 
 ```{r knitrOpts, echo=FALSE}
 library(knitr)
@@ -36,19 +38,22 @@ sessionInfo()
 
 # Directories
 
+To run "analysis" scripts, please download the zipped data folder at [https://zenodo.org/doi/10.5281/zenodo.13274562](https://zenodo.org/doi/10.5281/zenodo.13274562) and save to your local computer. Use the filepath to "RepoData" for the `masterDataDir` variable at the top of each analysis script in the "Directories" code chunk.
+
 ```{r directories, message = FALSE}
 # for master file
-masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+masterDataDir <- '/Users/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
 
 # intermediate folder for large objects (eg rf output)
 scratchFolder <- paste0(masterDataDir,'/intermediates')
-# make scratch folder if necessary
-dir.create(file.path(scratchFolder), showWarnings = FALSE)
+
 
 # output folder: clean df for figures
 repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
 
 ```
+
+
 
 # functions
 helper functions for processing ALEplot output
@@ -67,7 +72,8 @@ yhat <- function(X.model, newdata) as.numeric(predict(X.model, newdata, type = '
 
 ```
 
-# SCYM
+# SCYM: Standard Soil Moisture
+Analysis with soil moisture from the Standard Crop Model, which captures soil moisture changes from rainfall/ET
 
 ## Variable selection
 
@@ -331,4 +337,101 @@ aguP
 ```
 
 
+
+
+
+# SCYM: Enhanced Soil Moisture
+Analysis with soil moisture from the Enhanced Crop Model, which captures soil moisture changes from rainfall/ET + from the water table/capillary rise
+
+## RF Model: Enhanced sm
+
+```{r rf_enhanced, eval = FALSE}
+# load MARS output for selected variables
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+summary(marsAll)
+ev <- earth::evimp(marsAll) # estimate variable importance
+plot(ev)
+ev
+
+# vector of variable names
+envvars0 <- rownames(ev)[1:17]
+
+# load master df and add in july soil moisture from psim without wt
+scym_df0 <- readRDS(paste0(masterDataDir,'/masterData_pointSample.rds'))
+
+# get apsim soil moisture: standard model
+apsim_sm <- read_csv(paste0(masterDataDir,'/enhancedModel_JulySoilMoisture.csv'))
+
+scym_dfb <- scym_df0 %>%
+  left_join(apsim_sm)
+
+# add standard model soil moistures to variable vector
+envvars <- c(envvars0, 'SW1m_Jul')
+
+
+# prep random forest - df with only wanted variables
+df_20201b  <- scym_dfb %>%
+  dplyr::select(c(yield_tha, all_of(envvars), spei_ju1))
+
+# run and save RF
+set.seed(5)
+ncols <- dim(df_20201b)[2]
+rf_scym20b <- randomForest(x = df_20201b[,2:ncols],
+                         y = df_20201b$yield_tha,
+                         ntree = 100,
+                         importance = FALSE,
+                         nodesize = 10)
+rf_scym20b
+saveRDS(rf_scym20b, paste0(scratchFolder,'/rf1_scymPointRf_marsVars_enhancedSoilMoisture_ns10_100t.RDS'))
+
+```
+
+## Scym aleplots: Enhanced sm
+
+```{r ale_enhanced}
+# load data and intermediate model outputs --------------
+marsAll <- readRDS( paste0(scratchFolder,'/marsOutput_scymDf_forVarSel.rds'))
+ev <- earth::evimp(marsAll) # estimate variable importance
+envvars0 <- rownames(ev)[1:17]
+envvars <- c(envvars0, 'SW1m_Jul', 'spei_ju1')
+
+# df: master plus Standard Model Soil Moisture
+scym_df0 <- readRDS(paste0(masterDataDir,'/masterData_pointSample.rds')) %>% ungroup()
+apsim_sm2 <- read_csv(paste0(masterDataDir,'/enhancedModel_JulySoilMoisture.csv'))
+scym_dfb <- scym_df0 %>%
+  left_join(apsim_sm2)
+
+
+# df
+Xdat_scymb  <- scym_dfb %>%
+  dplyr::select(c(yield_tha, all_of(envvars))) %>%
+  tidyr::drop_na() %>%
+  as.data.frame()
+
+# rf model
+rfModel_scymb <- readRDS(paste0(scratchFolder,'/rf1_scymPointRf_marsVars_enhancedSoilMoisture_ns10_100t.RDS'))
+
+rfModel_scymb
+
+
+
+# ALE plot for WT variable (psim_07_m, column = J = 17)
+names(Xdat_scymb)
+
+ALEPlot_scymb <- ALEPlot(X = Xdat_scymb, X.model = rfModel_scymb, J = 17, 
+                        pred.fun = yhat, K = 100)
+
+# rearrange and visualize
+scymYield_dfb <- aleToDf(ALEPlot_scymb, 'psim7') 
+
+ggplot(scymYield_dfb, aes(x = psim7, y = YieldEffect)) +
+  geom_line() + geom_rug() + theme_bw()
+max(scymYield_dfb$YieldEffect)
+
+
+
+# # save data for final fig
+# write_csv(scymYield_dfb, paste0(repoDataDir,'/Fig3a_scym_yieldVsWT_aleplot_may2024_35kNoDupe_EnhancedSoilM.csv'))
+
+```
 

@@ -1553,13 +1553,17 @@ library(patchwork)</code></pre>
 ## [37] utf8_1.2.4       munsell_0.5.0    cachem_1.0.8</code></pre>
 <div id="directories" class="section level1">
 <h1>Directories</h1>
+<p>To run “analysis” scripts, please download the zipped data folder at
+<a href="https://zenodo.org/doi/10.5281/zenodo.13274562">https://zenodo.org/doi/10.5281/zenodo.13274562</a>
+and save to your local computer. Use the filepath to “RepoData” for the
+<code>masterDataDir</code> variable at the top of each analysis script
+in the “Directories” code chunk.</p>
 <pre class="r"><code># for master file
-masterDataDir &lt;- &#39;/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData&#39;
+masterDataDir &lt;- &#39;/Users/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData&#39;
 
 # intermediate folder for large objects (eg rf output)
 scratchFolder &lt;- paste0(masterDataDir,&#39;/intermediates&#39;)
-# make scratch folder if necessary
-dir.create(file.path(scratchFolder), showWarnings = FALSE)
+
 
 # output folder: clean df for figures
 repoDataDir &lt;- paste0(here::here(),&#39;/data/analysisOutput_forFigs&#39;)</code></pre>

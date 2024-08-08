@@ -37,19 +37,21 @@ sessionInfo()
 
 # Directories
 
+To run "analysis" scripts, please download the zipped data folder at [https://zenodo.org/doi/10.5281/zenodo.13274562](https://zenodo.org/doi/10.5281/zenodo.13274562) and save to your local computer. Use the filepath to "RepoData" for the `masterDataDir` variable at the top of each analysis script in the "Directories" code chunk.
+
 ```{r directories, message = FALSE}
 # for master file
-masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+masterDataDir <- '/Users/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
 
 # intermediate folder for large objects (eg rf output)
 scratchFolder <- paste0(masterDataDir,'/intermediates')
-# make scratch folder if necessary
-dir.create(file.path(scratchFolder), showWarnings = FALSE)
+
 
 # output folder: clean df for figures
 repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
 
 ```
+
 
 # functions
 helper functions for processing ALEplot output
