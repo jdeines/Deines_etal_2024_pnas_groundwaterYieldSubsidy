@@ -1,0 +1,267 @@
+---
+title: "stability analysis - figure"
+author: "jill deines"
+date: "3/23/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: assess stability**
+
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/03.50_Fig_stability/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(tidyverse)
+library(sf)
+
+
+library(randomForest)
+
+library(ALEPlot)
+aleToDf <- function(aleList, xname){
+  df <- data.frame(xname = aleList$x.values,
+                      'Effect' = aleList$f.values)
+  names(df)[1] <- xname
+  return(df)
+}
+# prep prediction function for ALEplot
+yhat <- function(X.model, newdata) as.numeric(predict(X.model, newdata, type = 'response'))
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+cleanDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/cleaned'
+
+# output scratch folder for model output rdata objects
+scratchFolder0 <- paste0(cleanDir,'/randomForests_ALE_scratch')
+scratchFolder <- paste0(cleanDir,'/randomForests_ALE_scratch_march2024_psimNoWT_soilm')
+
+
+# data for figs out dir:
+repoDataDir <- paste0(here::here(),'/data/cleaned_forFigs')
+```
+
+
+# SCYM - points
+
+## load scym
+
+```{r loadScym}
+scym <- readRDS(paste0(cleanDir,'/hydroCorn_masterData_v04_slim_Subset_points35kPerYearNoDupes_scym20.rds'))
+
+
+# extract static attributes for each location
+ptAttributes <- scym %>% 
+  group_by(geom_id) %>% 
+  slice(1) %>% 
+  dplyr::select(c(geom_id, psim_id, gridID, fips5, state, ASD, latitude, longitude,
+                  agtile, drclasscd, droughty, mukey_30m,  nccpi3corn, pwsl1pomu,
+                  rootznaws, soc0100, ted, slope,  tpi, TPIclass, TPIclass2))
+
+checkCounts<- scym %>%
+  group_by(geom_id) %>%
+  summarize(count = n()) %>%
+  arrange(-count)
+summary(checkCounts$count)
+
+# add in soil moisture
+
+# get psim soil moisture
+cleanDir2 <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/psims/processed'
+psim_noWT <- readRDS(paste0(cleanDir2,'/psims_noWT_1984-2020_20240518.rds'))
+psim_sm <- psim_noWT %>% dplyr::select(psim_id,  year, contains('SW1'))
+
+scym2 <- scym %>%
+  left_join(psim_sm %>% dplyr::select(psim_id, year, SW1m_Jul))
+
+
+
+# calculate stability
+stability <- scym2 %>%
+  group_by(geom_id) %>%
+  summarize(meanYield = mean(yield_tha),
+            stdevYield = sd(yield_tha),
+            sd_detrend = sd(yield_scym20_pixelDe),
+            meanWT_jul = mean(psim_07_m),
+            meanWT_jun = mean(psim_06_m),
+            meanWT_may = mean(psim_05_m),
+            meanVPD = mean(vpd_july),
+            meanPpt = mean(pr_grow),
+            meanAugTmax = mean(Augmaxt),
+            meanRad = mean(JJAradn),
+            meanPpt_early = mean(pr_early),
+            meanSW_jul = mean(SW1m_Jul)) %>%
+  left_join(ptAttributes)
+
+# make some classifications
+stability2 <- stability %>%
+  mutate(yield_tile3 = ntile(meanYield, 3),
+         vpd_tile3 = ntile(meanVPD,3),
+         soil_tile3 = ntile(rootznaws,3),
+         sd_mean = stdevYield/meanYield,
+         cv = sd_mean * 100)
+
+summary(stability2$cv)
+```
+
+
+## model with RF
+use RF and ALE to isolate the effects of gw
+
+### use cv yields
+
+```{r makeRF_cv, eval = FALSE}
+
+scym_df  <- stability2 %>%
+  dplyr::select(-c(geom_id, latitude, longitude, stdevYield, sd_detrend,
+                   meanYield,
+                   ted, agtile, contains('tile'), sd_mean, slope,
+                   pwsl1pomu, mukey_30m, droughty, drclasscd, tpi, ASD,
+                   state, fips5, psim_id, gridID, TPIclass, TPIclass2)) %>% 
+  dplyr::select(cv, everything()) %>% tidyr::drop_na()
+
+
+set.seed(5)
+ncols <- dim(scym_df)[2]
+rf_scym <- randomForest(x = scym_df[,2:ncols],
+                         y = scym_df$cv,
+                         ntree = 100,
+                         importance = TRUE)
+rf_scym
+varImpPlot(rf_scym)
+
+saveRDS(rf_scym, paste0(scratchFolder,'/stability_checkRf_coefVar_20230815_may24.RDS'))
+```
+
+## evaluate 
+
+### cv
+
+```{r ale_cv, fig.width = 3.25, fig.height = 3.5, dev = c('pdf','png')}
+
+scym_df  <- stability2 %>%
+  dplyr::select(-c(geom_id, latitude, longitude, stdevYield, sd_detrend,
+                   meanYield,
+                   ted, agtile, contains('tile'), sd_mean, slope,
+                   pwsl1pomu, mukey_30m, droughty, drclasscd, tpi, ASD,
+                   state, fips5, psim_id, gridID, TPIclass, TPIclass2)) %>% 
+  dplyr::select(cv, everything()) %>% tidyr::drop_na()
+
+rf_scym <- readRDS(paste0(scratchFolder,'/stability_checkRf_coefVar_20230815_may24.RDS'))
+rf_scym
+varImpPlot(rf_scym)
+
+# ale 
+Xdat <- scym_df %>% as.data.frame()
+names(Xdat)
+summary(Xdat$cv)
+
+## by mean WT
+ALEPlot_scym <- ALEPlot(X = Xdat, X.model = rf_scym, J = 2, pred.fun = yhat, K = 100)
+scymYield_df <- aleToDf(ALEPlot_scym, 'psim7') %>%
+  mutate(model = 'SCYM')
+
+ggplot(scymYield_df,
+       aes(x = psim7, y = Effect)) +
+  geom_line() + 
+  geom_rug() +
+  theme_bw() + 
+  ylab('Effect on Variability') + xlab('Mean July Depth-to-Water')+ 
+  theme(panel.grid.minor = element_blank())
+
+
+# numbers reporting: maybe vs mean effect for free drainage?
+
+meanFreeDrain <- scymYield_df %>% 
+  filter(psim7 > 2.75) %>% 
+  summarize(meanE = mean(Effect)) %>% 
+  pull(meanE)
+meanFreeDrain
+
+
+meanFreeDrain_cv <- scym_df %>% filter(meanWT_jul > 2.75) %>% summarize(meanCF_free = mean(cv)) %>% pull(meanCF_free)
+meanFreeDrain_cv
+
+meanOptimal_cv <- scym_df %>% filter(meanWT_jul > 1.05 & meanWT_jul < 1.5) %>% summarize(meanCF_free = mean(cv)) %>% pull(meanCF_free)
+meanOptimal_cv
+
+meanShallow_cv <- scym_df %>% filter(meanWT_jul < 1.05) %>% summarize(meanCF_free = mean(cv)) %>% pull(meanCF_free)
+meanShallow_cv
+
+
+
+## mean WT by MEAN VPD 
+ntiles <- 3
+Xdat3 <- Xdat %>%
+  mutate(vpd_tile = ntile(meanVPD, ntiles))
+
+
+# get curve for each vpd tercile
+vpd_list <- list()
+for(i in 1:ntiles) {
+  y <- i
+  df_tile <- Xdat3 %>% filter(vpd_tile == y)
+  ale_tile<- aleToDf(ALEPlot(X = df_tile, X.model = rf_scym, J = 2, pred.fun = yhat),
+                      'psim7') 
+  ale_tile$vpd_tile <- y
+  vpd_list[[i]] <- ale_tile
+}
+vpd <- do.call('rbind', vpd_list)
+
+
+```
+
+## manuscript figure
+
+```{r Fig_stability_scym, fig.width = 3.25, fig.height = 3.5, dev = c('pdf','png')}
+
+
+ggplot(vpd %>% mutate(type = 'Mean July VPD',
+                      vpd_tile = case_when(vpd_tile == 1 ~ 'Cool',
+                                           vpd_tile == 2 ~ 'Moderate',
+                                           vpd_tile == 3 ~ 'Warm')) %>%
+         filter(vpd_tile != 'Moderate'),
+       aes(x = psim7, y = Effect, linetype = type,
+           group = as.factor(vpd_tile), color =  as.factor(vpd_tile))) +
+  geom_line() +  
+  geom_rug() +
+  geom_line(data =scymYield_df %>% mutate(vpd_tile = 0, type = 'Combined'), 
+            col = 'black',aes(linetype = type)) +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  scale_color_manual(values = c('#1f78b4','#fd8d3c','#d6604d'), name = 'Mean July VPD') +
+  scale_linetype_manual(values=c( "twodash", "solid"))+
+  ylab('Effect on Coefficient of Variation') + xlab('Mean July Depth-to-Water (m)') +
+  theme_bw() + theme(legend.position = c(.73, .3),
+                     panel.grid.minor = element_blank(),
+                     legend.background = element_blank(),
+                     legend.title = element_blank())
+
+
+```
+
+## export
+export data to combine in fig 3
+
+```{r export, eval = FALSE}
+write_csv(scymYield_df, paste0(repoDataDir,'/stabilityAnalysis_main_may24.csv'))
+write_csv(vpd, paste0(repoDataDir,'/stabilityAnalysis_vpd_may24.csv'))
+```
+
+
+
+
+
+

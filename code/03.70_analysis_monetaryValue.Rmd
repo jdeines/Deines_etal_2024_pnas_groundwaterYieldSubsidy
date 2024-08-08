@@ -1,0 +1,306 @@
+---
+title: "Monetary value of gw subsidy"
+author: "jill deines"
+date: "05/20/2024"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: estimate monetary value based on crop prices and benefit/penalty numbers**
+
+This script makes supplementary figure S4
+
+
+Note: price data
+Price data was downloaded manually from the NASS quickstats tool (https://quickstats.nass.usda.gov/) for the following query: SURVEY - CROPS - FIELD CROPS - CORN - PRICE RECEIVED - 
+
+* CORN, GRAIN - PRICE RECEIVED, MEASURED IN $ / BU
+
+- TOTAL - STATE - ANNUAL 
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/03.70_monetaryValue/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(tidycensus)
+library(here)
+
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+projDir <- here::here()
+
+# nass info
+miscDir <- paste0(projDir,'/data/misc')
+price_fn <- 'NASS_cornPriceRecieved_byState_annual_1999-2023.csv'
+
+# cpi adjustment file in nass dir
+cpiFile <- 'cpi_priceAdjustments.csv'
+
+# crop area data based on SCYM (so CDL and Wang et al)
+scymCoverageBase <- 'yieldCoverage_scym9_polygrid.csv'
+
+
+# for master data file (yields)
+masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+psimFilename <- 'masterData_apsimGrid.rds'
+
+
+# output folder: clean df for figures
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+```
+
+
+# Load PSIM and assign conditions
+
+```{r psimPrep}
+# subsidy bounds from ale plot scym (3.03, 6.30)
+zoneMin <- 1.05
+zoneMax <- 2.5
+
+# load and process psim
+psim0 <- readRDS(paste0(masterDataDir,'/',psimFilename)) %>% 
+  filter(year < 2019 & scym2020_10prct == 1)
+
+# assign status-es to each psim grid-year
+psim <- psim0 %>%
+  mutate(gwPenalty = case_when(WT_Jul_m < zoneMin ~ 1),  # penaltly flag
+         # check weather conditions for subsidy
+         weather2_dry = case_when(spei_ju1 <= -50 ~ 1),
+         weather3_xDry = case_when(spei_ju1 <= -150 ~ 1), 
+         # flag for subsidy conditions
+         gwSubsidy0 = case_when(WT_Jul_m >= zoneMin & WT_Jul_m <= zoneMax ~ 1),
+         gwSubsidy_dry = case_when(weather2_dry == 1 & gwSubsidy0 == 1 ~ 1),
+         gwSubsidy_xDry = case_when(weather3_xDry == 1 & gwSubsidy0 ==1 ~1))
+
+
+```
+
+
+
+# load crop area and process
+maize area by grid
+
+in this file, the "yield_tha" variables is the # of 30m pixels within the 7.5 km psim grid cell that have valid yield values (aka crop presence
+)
+```{r getCropArea}
+## coverage - load annual files into 1 df
+filesCover <- list.files(miscDir, pattern = scymCoverageBase, full.names = TRUE)
+coverage <- purrr::map_df(filesCover, function(x){
+  df <- read_csv(x) %>%
+    mutate(scym2020_perc = (yield_tha/cellCount*100)) %>%
+    dplyr::select(psim_id, year, cellCount, yield_tha,scym2020_perc)
+  })
+
+# coverage ranges - percent of psim grid cell
+summary(coverage$scym2020_perc)
+
+
+# and calculate total ha of maize scym 2020
+maize_ha <- coverage %>%
+  mutate(cell_m2 = yield_tha * (30*30), # count of active cells x cell area
+         cell_ha = cell_m2 / 10000) 
+
+```
+
+# load price and merge
+
+
+```{r load}
+# price data for maize
+price00 <- read_csv(paste0(miscDir,'/',price_fn))
+price0 <- price00 %>%
+  dplyr::select(c(State, Year, Value)) %>%
+  filter(Year >= 1999 & Year <= 2018) %>%
+  rename(Price_dpbu = Value)
+
+# adjust prices
+# load consumer price index adjustments
+cpi <- read_csv(paste0(miscDir, '/',cpiFile)) %>%
+  dplyr::select(cpi_year, adj_factor_2018) %>%
+  rename(year = cpi_year)
+
+
+# add state code as "state"
+data("fips_codes") # from tidycensus
+fips_states <- fips_codes %>%
+  dplyr::select(c(state, state_name)) %>%
+  group_by(state) %>%
+  slice(1) %>%
+  mutate(State = toupper(state_name)) 
+
+price <- price0 %>%
+  left_join(fips_states) %>%
+  dplyr::select(state,Year, Price_dpbu)
+
+# make master subsidy/penalty, yield, and price data
+combo <- psim %>%
+  dplyr::select(c(psim_id,state, year,yield_tha, pr_grow,
+                  gwPenalty, gwSubsidy_dry, gwSubsidy_xDry, WT_Jul_m)) %>%
+  left_join(price %>% rename(year = Year)) %>%
+  mutate(Price_dpt = Price_dpbu * 39.3683) %>%
+  left_join(maize_ha %>% dplyr::select(psim_id, year, cell_ha)) %>%
+  # add adjusted price
+  left_join(cpi) %>%
+  mutate(Price_dpt_adj = Price_dpt / adj_factor_2018)
+
+combo %>% select(contains('Price'))
+
+plot_price <- ggplot(combo,
+       aes(x = year, y = Price_dpt_adj, group = year)) +
+  geom_boxplot() + ylab('dollars per ton') +
+  theme_bw() + xlab('') + ggtitle('Price distribution by state in 2018 dollars')
+
+plot_price
+```
+
+
+
+
+
+# calculations
+
+## gw penalty
+
+```{r calcPenalty}
+combo %>%
+  filter(gwPenalty == 1) %>%
+  summarize(meanDepth = mean(WT_Jul_m, na.rm = T))
+
+avgPenalty <- -0.01 # -1% is the change at .85
+
+penalty <- combo %>%
+  filter(gwPenalty == 1) %>%
+  mutate(penalty = yield_tha * avgPenalty * cell_ha * Price_dpt_adj ,
+          totalYield = yield_tha * cell_ha)
+
+penaltyByYear <- penalty %>%
+  group_by(year) %>%
+  summarize(penalty = sum(penalty, na.rm = T),
+            yieldTotal = sum(totalYield,na.rm = T)) %>%
+  ungroup()
+
+plot_penalty <- ggplot(penaltyByYear,
+       aes(x = year, y = penalty/1000000)) +
+  geom_line() +
+  ylab('Million $') + xlab('') +
+  theme_bw() + ggtitle('Yield Penalty')
+plot_penalty
+```
+
+
+## gw subsidy
+apply the high rate in cells that meet xDry conditions before applying the typical rate for other cells
+
+```{r calcGwSubsidy}
+
+# set subsidies
+maxYieldBoost_dry <- .034 # ~3.4 percent boost
+maxYieldBoost_xDry <- maxYieldBoost_dry * 2
+
+
+# psims based subsidy
+subsidyXdry_max <- combo %>%
+  filter(gwSubsidy_xDry == 1) %>%
+  mutate(subsidy_max = yield_tha * maxYieldBoost_xDry * cell_ha * Price_dpt_adj ,
+          totalYield = yield_tha * cell_ha)
+
+subsidy_dry_max <- combo %>%
+  filter(is.na(gwSubsidy_xDry) & gwSubsidy_dry == 1) %>%
+  mutate(subsidy_max = yield_tha * maxYieldBoost_dry * cell_ha * Price_dpt_adj,
+          totalYield = yield_tha * cell_ha)
+
+
+
+# combine and aggregate
+totalSubsidy <- subsidyXdry_max %>% bind_rows(subsidy_dry_max) 
+
+subsidyByYear <- totalSubsidy %>%
+  group_by(year) %>%
+  summarize(subSidyTotal = sum(subsidy_max, na.rm = T),
+            yieldTotal = sum(totalYield,na.rm = T)) %>%
+  ungroup() %>%
+  bind_rows(data.frame(year = 1999,
+                       subSidyTotal = 0))
+
+plot_subsidy <- ggplot(subsidyByYear,
+       aes(x = year, y = subSidyTotal/1000000)) +
+  geom_line() +
+  ylab('Million $') + xlab('Year') +
+  theme_bw() + ggtitle('Yield Subsidy')
+
+# other things
+totalProduction <- combo %>%
+  mutate(production = yield_tha * cell_ha) %>%
+  group_by(year) %>%
+  mutate(totalProduction = sum(production, na.rm = TRUE))
+
+plot_yield <- ggplot(totalProduction,
+       aes(x = year, y = totalProduction/1000000)) +
+  geom_line() +
+  ylab('Million t') + xlab('') +
+  theme_bw() + ggtitle('Total regional maize production')
+
+# other things2
+precip <- combo %>%
+  group_by(year) %>%
+  mutate(ppt = mean(pr_grow, na.rm = TRUE))
+
+plot_precip <- ggplot(precip,
+       aes(x = year, y = ppt)) +
+  geom_line() +
+  ylab('mm') + xlab('') +
+  theme_bw() + ggtitle('Mean Growing Season Precip')
+
+plot_summary <- plot_precip / plot_yield / plot_price / plot_penalty / plot_subsidy &
+  theme(plot.title = element_text(size = 11),
+        plot.margin = margin(.2,.2,.2,.2,'pt'))
+plot_summary
+
+# ggsave(filename = paste0(figDir,'/FigS4_money_5panel_timeseries.png'),
+#        plot = plot_summary,
+#        width = 6.5, height = 7, dpi = 300, units = 'in')
+# 
+# ggsave(filename = paste0(figDir,'/FigS4_money_5panel_timeseries.pdf'),
+#        plot = plot_summary,
+#        width = 6.5, height = 7, dpi = 300, units = 'in')
+```
+
+
+get total numbers for study period
+
+```{r}
+# annual range
+subsidyByYear %>%  
+  filter(year != 1999) %>%
+  slice_min(subSidyTotal)
+subsidyByYear %>%  slice_max(subSidyTotal)
+
+
+# total for study period
+subsidyByYear %>% 
+  summarize(subSidyTotal = sum(subSidyTotal, na.rm = T))
+
+# total penalties
+penaltyByYear
+
+penaltyByYear %>% 
+  summarize(penaltyTotal = sum(penalty, na.rm = T))
+```
+

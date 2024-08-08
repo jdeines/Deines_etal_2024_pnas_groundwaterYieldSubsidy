@@ -1,0 +1,173 @@
+---
+title: "Analysis: Agreement of scym vs enhanced/standard model"
+author: "jill deines"
+date: "03/20/2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    keep_md: true
+---
+
+**Goal: Evaluate standard and enhanced modeled yield with SCYM satellite-derived yield observations**
+
+
+```{r knitrOpts, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=FALSE, fig.path='../figure/02.50_analysis_scym_v_cropModels/')
+```
+
+**R Packages Needed**
+
+```{r packages, message=FALSE, echo=TRUE, eval=TRUE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(earth)
+library(randomForest)
+
+library(here)
+library(patchwork)
+
+# load function for agreement stats
+projDir <- here::here()
+source(paste0(projDir,'/code/functions/funs.R'))
+
+sessionInfo()
+```
+
+# Directories
+
+```{r directories, message = FALSE}
+# for master file
+masterDataDir <- '/Users/dein121/Library/CloudStorage/OneDrive-PNNL/Documents/projects/2022_compass_GLM/paper_gw_subsidy/data/RepoData'
+
+# output folder: clean df for figures
+repoDataDir <- paste0(here::here(),'/data/analysisOutput_forFigs')
+
+```
+
+# Load Formatted Model data
+
+variable notes 
+
+* when variables were named, I was dumb and didn't understand SPEI. so SPEI really means water deficit (ppt - pet))
+* psim_WT_tha = yield (in t/ha) from the Enhanced Crop Model (aka, with water table = WT)
+* psim_noWT_tha = yield (in t/ha) from the Standard Crop Model (aka, with no water table = noWT)
+* yield_tha = SCYM satellite-derived yield observations
+
+
+
+```{r loadData}
+# load enhanced model and standard model soil moisture
+psim0 <- readRDS(paste0(masterDataDir,'/masterData_apsimGrid.rds'))
+
+# add water deficit classes
+psim <- psim0 %>%
+  filter(!is.na(spei_ju1)) %>%
+  mutate(speiJu_class2 = case_when(spei_ju1 >= 0 ~ 1,
+                                spei_ju1 < 0  & spei_ju1 >= -50 ~ 2,
+                                spei_ju1 < -50 & spei_ju1 >= -150 ~ 3,
+                                spei_ju1 < -150 ~ 4))
+
+# consider only grid cells with reasonable amount of corn crop cover (10%+)
+psim_consensus <- psim %>% filter(scym2020_10prct == 1) %>%
+  filter(!is.na(yield_tha))
+
+table(psim_consensus$speiJu_class2)
+```
+
+# calculate agreement statistics
+
+```{r stats}
+
+# psim WT and scym2020
+stats_a <- psim_consensus %>% 
+  filter(!is.na(spei_ju1)) %>%
+  group_by(speiJu_class2) %>%
+  do(as.data.frame(calcStats(.$psim_WT_tha, .$yield_tha))) %>%
+  ungroup()
+stats_a$scymType <- 'scym2020'
+stats_a$psimType <- 'Enhanced Model - with WT'
+
+stats_b <- psim_consensus %>% 
+  filter(!is.na(spei_ju1)) %>%
+  group_by(speiJu_class2) %>%
+  do(as.data.frame(calcStats(.$psim_noWT_tha, .$yield_tha))) %>%
+  ungroup()
+stats_b$scymType <- 'scym2020'
+stats_b$psimType <- 'Standard Model - no WT'
+
+stats_speiClass <- bind_rows(stats_a, stats_b)
+
+speiAgu <- stats_speiClass %>%
+  dplyr::select(speiJu_class2, r2, rmse, psimType) %>%
+  mutate(speiClass = case_when(speiJu_class2 == 1 ~ 'Wet',
+                               speiJu_class2 == 2 ~ 'Normal',
+                               speiJu_class2 == 3 ~ 'Dry',
+                               speiJu_class2 == 4 ~ 'Very Dry'))
+
+# export df for manuscript figure
+write_csv(speiAgu, paste0(repoDataDir,'/Figure2_agreementStats.csv'))
+```
+
+
+# Fig preview
+
+```{r fig}
+xLevels <- c('Wet','Normal','Dry','Very Dry')
+
+p_r2<- ggplot(speiAgu %>% arrange(psimType),
+       aes(x = factor(speiClass, level = xLevels), y = r2)) +
+  geom_line(aes(group = speiJu_class2), col = 'gray50') +
+  geom_point(aes(color = psimType),cex =3) +
+  ylim(0, .6) + xlab('') + 
+  labs(y = expression(paste('Variance Explained (', R^2, ')'))) +
+  scale_color_manual(values = c('#1f78b4','#ff7f00' )) +
+  theme_bw() + theme(legend.position = c(.4,.82),
+                     legend.title = element_blank(),
+                       panel.grid.major.x = element_blank(),
+                     legend.background = element_blank(),
+                     panel.grid.minor = element_blank()) 
+
+p_rmse <- ggplot(speiAgu %>% arrange(psimType),
+       aes(factor(speiClass, level = xLevels), y = rmse)) +
+  geom_line(aes(group = speiJu_class2), col = 'gray50') +
+  geom_point(aes(color = psimType),cex =3) +
+  ylim(0, 5) + xlab('') + ylab('RMSE (t/ha)') +
+  scale_color_manual(values = c('#1f78b4','#ff7f00' )) +
+  theme_bw() + theme(legend.position = 'none',
+                       panel.grid.major.x = element_blank(),
+                     panel.grid.minor = element_blank()) 
+
+p_r2 + p_rmse
+```
+
+
+Numeric summaries
+
+```{r byTheNumbers}
+nrow(psim_consensus)
+
+obsByYear <- psim_consensus %>%
+  group_by(year) %>%
+  summarize(count = n())
+mean(obsByYear$count)
+summary(obsByYear$count)
+
+
+# overall stats
+calcStats(psim_consensus$psim_WT_tha, psim_consensus$yield_tha)
+
+calcStats(psim_consensus$psim_noWT_tha, psim_consensus$yield_tha)
+
+# stats by weather group
+stats_speiClass
+
+
+# improvement in rmse for very dry class (percent increase)
+(1 - stats_speiClass$rmse[4]/stats_speiClass$rmse[8]) * 100
+
+# improvement in rmse for  dry class (percent increase)
+(1 - stats_speiClass$rmse[3]/stats_speiClass$rmse[7]) * 100
+```
